@@ -8,6 +8,8 @@ contract SpaceToken is ERC721URIStorage {
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIds;
 
+    constructor() ERC721("SpaceToken", "SPTK") {}
+
     struct TokenDetails {
         string url;
         string description;
@@ -16,7 +18,8 @@ contract SpaceToken is ERC721URIStorage {
         uint256 lastWithdrawDate;
     }
 
-    event WithdrawAction(address owner, address to, uint256 amount);
+    event MintToken(address owner, string url);
+    event WithdrawAction(address owner, uint256 tokenId, uint256 amount);
 
     modifier onlyTokenOwner(uint256 tokenId) {
         require(_msgSender() == ownerOf(tokenId));
@@ -24,61 +27,110 @@ contract SpaceToken is ERC721URIStorage {
     }
 
     // Map from tokenId to tokenData
-    mapping(address => uint256[]) public _userTokenIds;
+    mapping(address => uint256[]) public _minterTokenIds;
 
-    // TokenId to it's details
+    // from tokenId to it's details
     mapping(uint256 => TokenDetails) public _tokenDetails;
 
-    // Map address to lastWithdrawDate
-    // mapping(address => uint256) public _penddingWithdraws;
-
-    constructor() ERC721("SpaceToken", "SPTK") {}
-
-    // Create a token with siteUrl & Token Details
-    function mintToken(address owner, TokenDetails memory tokenDetails)
+    /**
+     * @param owner Token minter address
+     * @param url String representing the url of website
+     * @return tokenId id of created NFT
+     */
+    function mintToken(address owner, string memory url)
         public
-        returns (uint256)
+        returns (uint256 tokenId)
     {
-        uint256 tokenId = _tokenIds.current();
+        tokenId = _tokenIds.current();
         _mint(owner, tokenId);
-        _setTokenURI(tokenId, tokenDetails.url);
+        _setTokenURI(tokenId, url);
 
-        _userTokenIds[owner].push(tokenId);
+        _minterTokenIds[owner].push(tokenId);
 
-        // Set lastWithdrawDate as init date
+        emit MintToken(owner, url);
+
+        // Prepare token details for save
+        TokenDetails memory tokenDetails;
+        tokenDetails.url = url;
         tokenDetails.lastWithdrawDate = block.timestamp;
+
+        // Push tokendatails to map
         _tokenDetails[tokenId] = tokenDetails;
 
         _tokenIds.increment();
-
         return tokenId;
+    }
+
+    function getTokenDetailsById(uint256 tokenId)
+        public
+        view
+        returns (TokenDetails memory token)
+    {
+        return _tokenDetails[tokenId];
     }
 
     /**
      * @param owner An address of a user of which we want to get his tokens
+     * @return tokens List of Tokens with all details about each
      */
-    function getTokenDetails(address owner)
+    function getTokensDetails(address owner)
         public
         view
-        returns (TokenDetails[] memory tokenDetails)
+        returns (TokenDetails[] memory)
     {
         // Get all user tokenIds
-        uint256[] memory userTokenIds = _userTokenIds[owner];
+        uint256[] memory userTokenIds = _minterTokenIds[owner];
 
         // Loop through all tokenIds to get their details
+        TokenDetails[] memory tokens = new TokenDetails[](userTokenIds.length);
+
         for (uint256 i = 0; i < userTokenIds.length; i++) {
-            tokenDetails[i] = _tokenDetails[userTokenIds[i]];
+            tokens[i] = _tokenDetails[userTokenIds[i]];
         }
 
-        return tokenDetails;
+        return tokens;
+    }
+
+    function updateTokenDetials(
+        uint256 tokenId,
+        string calldata description,
+        string calldata iconHash,
+        string calldata screenshotHash
+    ) public virtual onlyTokenOwner(tokenId) {
+        // Get token by id
+        TokenDetails memory token = _tokenDetails[tokenId];
+
+        // Update token details
+        token.description = description;
+        token.iconHash = iconHash;
+        token.screenshotHash = screenshotHash;
+
+        _tokenDetails[tokenId] = token;
+    }
+
+    /**
+     * @return amount in wei
+     */
+    function getEarnedTokens(uint256 tokenId)
+        public
+        view
+        returns (uint256 amount)
+    {
+        uint256 lastWithdrawDate = _tokenDetails[tokenId].lastWithdrawDate;
+
+        // amonut = timepassed in seconds / 60 (to minutes) / 24 (to days)
+        uint256 daysPassed = (block.timestamp - lastWithdrawDate) / 60 / 24;
+
+        amount = daysPassed * 10**16;
     }
 
     // Claim earned ETH
-    function withdrawEarnedTokens(
-        address payable to,
-        uint256 amount,
-        uint256 tokenId
-    ) external payable virtual onlyTokenOwner(tokenId) {
+    function withdrawEarnedTokens(uint256 amount, uint256 tokenId)
+        external
+        payable
+        virtual
+        onlyTokenOwner(tokenId)
+    {
         // Get amount of wei to send
         uint256 earnedTokens = getEarnedTokens(tokenId);
 
@@ -91,24 +143,8 @@ contract SpaceToken is ERC721URIStorage {
         _tokenDetails[tokenId].lastWithdrawDate = block.timestamp;
 
         // Send earned tokens
-        to.transfer(amount);
+        payable(_msgSender()).transfer(amount);
 
-        emit WithdrawAction(_msgSender(), to, amount);
-    }
-
-    /**
-     * @return amount ,in wei
-     */
-    function getEarnedTokens(uint256 tokenId)
-        private
-        view
-        returns (uint256 amount)
-    {
-        uint256 lastWithdrawDate = _tokenDetails[tokenId].lastWithdrawDate;
-
-        // amonut = timepassed in seconds / 60 (to minutes) / 24 (to days)
-        uint256 daysPassed = (block.timestamp - lastWithdrawDate) / 60 / 24;
-
-        amount = daysPassed * 10**16;
+        emit WithdrawAction(_msgSender(), tokenId, amount);
     }
 }
